@@ -3,13 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
+// функция, flag.usage вызывает функцию PrintDefaults, которая выводит список опций -h, -help для помощи вывода в консоль
 func init() {
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -18,68 +20,81 @@ func init() {
 	}
 }
 
+//функция обрабатывает ссылки из файла и отправляет запросы, результат записывает в отдельный созданный файл
+func processURL(url *url.URL, dstPtr string) {
+	outputFileName := dstPtr + "/" + url.Host + ".txt"
+
+	// Проверяем, существует ли уже файл с таким именем
+	if _, err := os.Stat(outputFileName); err == nil {
+		fmt.Println("Файл для", url.Host, "уже существует")
+		return
+	}
+
+	resp, err := http.Get(url.String())
+	if err != nil {
+		fmt.Println(url, ":", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(url, ":", err)
+		return
+	}
+
+	outputFile, err := os.Create(outputFileName)
+	if err != nil {
+		fmt.Println(url, ":", err)
+		return
+	}
+	defer outputFile.Close()
+
+	outputFile.Write(body)
+
+	fmt.Println(url, ":", "Результат сохранен в файл", outputFileName)
+}
+
 func main() {
-	fileName := flag.String("src", "", "Имя файла")                  //флаг для имени файла
-	dstPtr := flag.String("dst", "", "Название конечной директории") //флаг для названия конечной директории
+	start := time.Now()                             //счетчик выполнения программы
+	fileName := flag.String("src", "", "Имя файла") //объявляем флаги
+	dstPtr := flag.String("dst", "", "Название конечной директории")
 	flag.Parse()
 
 	if *fileName == "" {
-		fmt.Println("Необходимо указать имя файла") //проверка на наличие имени файла
+		fmt.Println("Необходимо указать имя файла")
 		return
 	}
 
 	if *dstPtr == "" {
-		fmt.Println("Необходимо указать название конечной директории") //проверка на наличие названия конечной директории
+		fmt.Println("Необходимо указать название конечной директории")
 		return
 	}
 
 	file, err := os.ReadFile(*fileName)
 	if err != nil {
-		fmt.Println("Ошибка чтения файла:", err) //проверка чтения файла
+		fmt.Println("Ошибка чтения файла:", err)
 		return
 	}
 
-	err = os.MkdirAll(*dstPtr, 0777)
+	err = os.MkdirAll(*dstPtr, 0777) //создание директории
 	if err != nil {
-		fmt.Println("Error creating directory:", err)
+		fmt.Println("Ошибка создания директории:", err)
 		return
 	}
 
-	fmt.Println("Directory", *dstPtr, "created successfully")
-	//создание директории
+	fmt.Println("Директория", *dstPtr, "успешно создана")
 
-	content := string(file)               //получение содержимого файла
-	lines := strings.Split(content, "\n") //разбиение содержимого файла на строки
-
-	for _, line := range lines { //Проверка на корректность ссылок, неправильные сразу отбрасываем
-		u, read := url.Parse(line)
-		if read != nil && u.Scheme == "" && u.Host == "" {
-			continue
+	content := string(file)
+	lines := strings.Split(content, "\n")
+	//парсинг ссылок из файла и вызов функции processURL
+	for _, line := range lines {
+		u, err := url.Parse(line)
+		if err == nil && u.Scheme != "" && u.Host != "" {
+			processURL(u, *dstPtr)
 		}
-
-		resp, read := http.Get(line) //Отправляем гет запросы оставшимся ссылкам
-		if read != nil {
-			fmt.Println(line, ":", read)
-			continue
-		}
-		defer resp.Body.Close() //закрытие потока
-
-		body, read := ioutil.ReadAll(resp.Body) //чтение ответа
-		if read != nil {
-			fmt.Println(line, ":", read)
-			continue
-		}
-		//Сохранение результатов в файлы
-		outputFileName := *dstPtr + "/" + strings.Replace(line, "://", "_", -1) + ".txt"
-		outputFile, create := os.Create(outputFileName)
-		if create != nil {
-			fmt.Println(line, ":", create)
-			continue
-		}
-		defer outputFile.Close() //закрытие потока
-
-		outputFile.Write(body)
-
-		fmt.Println(line, ":", "Результат сохранен в файл", outputFileName) //Отчет о результате работы
 	}
+
+	elapsed := time.Since(start) //остановка счётчика и вывод
+	fmt.Printf("Время выполнения программы: %s\n", elapsed)
 }
